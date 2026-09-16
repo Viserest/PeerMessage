@@ -154,7 +154,7 @@ class Startup {
     private bool                    blocklist_enabled = true;
     // External Requests/Minute
     private UInt32                  blocklist_ratelimit = 500;
-    private Char                    cmd_delim = '/';
+    private Char                    cmd_prefix = '/';
     private CancellationTokenSource cancellation = new();
     static void ShowCliHelp()
     {
@@ -164,9 +164,9 @@ class Startup {
         Console.WriteLine("");
         Console.WriteLine("OPTIONS");
         Console.WriteLine("    --port Port                        Listening port for peers");
-        Console.WriteLine("    --peer IpAddress:Port@PublicKey    Add peer to peerlist; PublicKey is only recommended");
+        Console.WriteLine("    --peer IpAddress:Port@PublicKey    Add peer to peerlist; optional PublicKey");
         Console.WriteLine("    --block IpAddress                  Add ip to blocklist");
-        Console.WriteLine("    --cmd-delim Char                   Character which starts commands");
+        Console.WriteLine("    --cmd-prefix Char                  Character which starts commands");
         Console.WriteLine("    --help                             Show this help page");
         Console.WriteLine("");
     }
@@ -178,7 +178,7 @@ class Startup {
             case "--port": {
                 if (i + 1 >= args.Length)
                 {
-                    Console.WriteLine("! Port option must include Port.");
+                    Console.WriteLine("! Port option must include Port");
                     return false;
                 }
                 server = new(IPAddress.Any, UInt16.Parse(args[i + 1]));
@@ -187,7 +187,7 @@ class Startup {
             case "--peer": {
                 if (i + 1 >= args.Length)
                 {
-                    Console.WriteLine("! Peer option must include IpAddress, Port and optional PublicKey.");
+                    Console.WriteLine("! Peer option must include IpAddress, Port and optional PublicKey");
                     return false;
                 }
                 peerlist.Add(new Peer(args[i + 1]));
@@ -196,20 +196,20 @@ class Startup {
             case "--block": {
                 if (i + 1 >= args.Length)
                 {
-                    Console.WriteLine("! Block option must include IpAddress.");
+                    Console.WriteLine("! Block option must include IpAddress");
                     return false;
                 }
                 blocklist.Add(IPAddress.Parse(args[i + 1]));
                 break;
             }
-            case "--cmd-delim":
+            case "--cmd-prefix":
             {
                 if (i + 1 >= args.Length)
                 {
-                    Console.WriteLine("! Command deliminator option must include Char.");
+                    Console.WriteLine("! Command prefix option must include Char");
                     return false;
                 }
-                cmd_delim = Char.Parse(args[i + 1]);
+                cmd_prefix = Char.Parse(args[i + 1]);
                 break;
             }
             case "--help": {
@@ -229,7 +229,7 @@ class Startup {
         Console.WriteLine("    max             No args: GET, 1 arg: SET; Maximum peerlist size");
         Console.WriteLine("    list            List peerlist and their status");
         Console.WriteLine("    reload          Reload peerlist");
-        Console.WriteLine("    add             Add peer with IpAddress:Port@PublicKey; PublicKey is optional");
+        Console.WriteLine("    add             Add peer with IpAddress:Port@PublicKey; optional PublicKey");
         Console.WriteLine("    del|rm          Remove peer using PeerID");
         Console.WriteLine("");
         Console.WriteLine("block               === BLOCKLIST SUB-COMMAND");
@@ -247,6 +247,13 @@ class Startup {
     }
     async Task HandleCommands(String[] cmds)
     {
+        Console.WriteLine("ARGS");
+        foreach (String cmd in cmds)
+        {
+            Console.WriteLine("A: {0}", cmd);
+        }
+        Console.WriteLine("");
+        
         int i = 0;
         switch (cmds[i++])
         {
@@ -326,7 +333,7 @@ class Startup {
                     case "add": {
                         if (i + 1 >= cmds.Length)
                         {
-                            Console.WriteLine("! Peer option must include IpAddress, Port and optional PublicKey.");
+                            Console.WriteLine("! Peer option must include IpAddress, Port and optional PublicKey");
                             return;
                         }
                         this.peerlist.Add(new Peer(cmds[i + 1]));
@@ -336,11 +343,15 @@ class Startup {
                     case "rm": {
                         if (i + 1 >= cmds.Length)
                         {
-                            Console.WriteLine("! Missing PeerID for removal.");
+                            Console.WriteLine("! Missing PeerID for removal");
                             return;
                         }
                         int removed = this.peerlist.RemoveAll(peer => peer.MatchesPeerId(cmds[i++]));
-                        Console.WriteLine("! Removed {0} peers.", removed);
+                        Console.WriteLine("! Removed {0} peers", removed);
+                        break;
+                    }
+                    default: {
+                        Console.WriteLine("! Sub-Command not found");
                         break;
                     }
                 }
@@ -401,7 +412,7 @@ class Startup {
                     case "add": {
                         if (i + 1 >= cmds.Length)
                         {
-                            Console.WriteLine("! Block option must include IpAddress.");
+                            Console.WriteLine("! Block option must include IpAddress");
                             return;
                         }
                         this.blocklist.Add(IPAddress.Parse(cmds[i + 1]));
@@ -411,11 +422,15 @@ class Startup {
                     case "rm": {
                         if (i + 1 >= cmds.Length)
                         {
-                            Console.WriteLine("! Missing IpAddress for removal.");
+                            Console.WriteLine("! Missing IpAddress for removal");
                             return;
                         }
                         int removed = this.blocklist.RemoveAll(ip => ip.Equals(cmds[i++]));
-                        Console.WriteLine("! Removed {0} blocked IpAddresses.", removed);
+                        Console.WriteLine("! Removed {0} blocked IpAddresses", removed);
+                        break;
+                    }
+                    default: {
+                        Console.WriteLine("! Sub-Command not found");
                         break;
                     }
                 }
@@ -442,15 +457,27 @@ class Startup {
                 cancellation.Cancel();
                 break;
             }
+            default: {
+                Console.WriteLine("! Command not found");
+                break;
+            }
         }
+    }
+    static void UpdateInputLine(bool is_command, StringBuilder sb)
+    {
+        Console.Write("\r{0} {1}", is_command ? '/' : ':', sb.ToString());
     }
     async Task HandleInput()
     {
         CancellationToken token = cancellation.Token;
 
         // Reuse for each typed line
+        bool is_command = false;
+        ConsoleKey key;
+        char key_char;
         StringBuilder sb = new();
 
+        Console.Write("\r: ");
         while (!token.IsCancellationRequested)
         {
             // Colon means your typing a message
@@ -462,61 +489,77 @@ class Startup {
             // Else:
             //     Keeps as message prompt
             //     Puts line into string message
-            sb.Clear();
-            Console.Write(": ");
 
-            // Started writing a command
-            bool is_command = false;
-            ConsoleKey key;
-            char key_char;
-            do
+            // Get pressed key
+            ConsoleKeyInfo key_info = Console.ReadKey(false);
+            key = key_info.Key;
+            key_char = key_info.KeyChar;
+
+            // Handle which key was pressed
+            // Switching to command prompt
+            if (key_char == cmd_prefix && sb.Length < 1 && !is_command)
             {
-                ConsoleKeyInfo key_info = Console.ReadKey(false);
-                key = key_info.Key;
-                key_char = key_info.KeyChar;
+                if (is_command) continue;
+                // Can only happen when string is empty and not currently a command
+                is_command = true;
+                Console.Write("\r/  \b");
+            }
+            // Switching back to message prompt
+            else if (key == ConsoleKey.Escape && is_command)
+            {
+                is_command = false;
+                sb.Clear();
+                Console.Write("\r: ");
+            }
+            // Make backspace
+            else if (key == ConsoleKey.Backspace)
+            {
+                if (sb.Length < 1) continue;
+                sb.Remove(sb.Length - 1, 1);
+                Console.Write("\b ");
+                UpdateInputLine(is_command, sb);
+            }
+            // Run command or send message
+            else if (key == ConsoleKey.Enter)
+            {
+                // Empty string
+                if (sb.Length < 1) {
+                    Console.Write("\r: ");
+                    continue;
+                }
 
-                // Switching to command prompt
-                if (key_char == cmd_delim && sb.Length == 1 && !is_command)
+                if (is_command)
                 {
-                    //Console.Write("\r\b\b/ ");
-                    is_command = true;
+                    Console.WriteLine("'/{0}'", sb.ToString());
+                    await HandleCommands(sb.ToString().Split(' '));
                 }
-                // Switching back to message prompt
-                else if (key == ConsoleKey.Escape && is_command)
-                {
-                    is_command = false;
-                    sb.Clear();
-                }
-                else if (key == ConsoleKey.Backspace)
-                {
-                    if (sb.Length == 0) continue;
-                    // Backspace
-                    Console.Write("\b ");
-                    sb.Remove(sb.Length - 1, 1);
-                }
-                // All other keys
                 else
                 {
-                    sb.Append(key_char);
+                    // If you have peers then send to everyone
+                    if (peerlist.Count != 0)
+                    {
+                        foreach (Peer peer in peerlist)
+                        {
+                            await peer.SendMessageAsync(sb.ToString());
+                        }
+                    }
+
+                    // Print message and maybe error message
+                    Console.WriteLine("< {0}", sb.ToString());
+                    if (peerlist.Count == 0)
+                    {
+                        Console.WriteLine("! No peers have been created");
+                    }
                 }
-
-                Console.Write("\r{0} {1}", is_command ? '/' : ':', sb.ToString());
-            } while (key != ConsoleKey.Enter);
-
-            if (sb.Length == 1) continue;
-
-            if (is_command)
-            {
-                Console.WriteLine("/ {0}", sb.ToString());
-                await HandleCommands(sb.ToString().Split(' '));
+                is_command = false;
+                sb.Clear();
+                Console.Write("\r: ");
             }
+            // All other keys
             else
             {
-                Console.WriteLine("< {0}", sb.ToString());
-                foreach (Peer peer in peerlist)
-                {
-                    await peer.SendMessageAsync(sb.ToString());
-                }
+                sb.Append(key_char);
+                UpdateInputLine(is_command, sb);
             }
         }
     }
@@ -525,7 +568,7 @@ class Startup {
         // Port option wasnt called
         if (server == null)
         {
-            Console.WriteLine("! Port option must be provided.");
+            Console.WriteLine("! Port option must be provided");
             return false;
         }
 
@@ -583,23 +626,25 @@ class Startup {
             });
         }
 
-        // Gather console message and send to each peer
-        _ = Task.Run(async () => {
-            await startup.HandleInput();
-        });
-
         // Handle server
         if (!await startup.HandleServerSetup())
         {
             Console.WriteLine("! Error setting up server");
             return 1;
         }
-        while (true) {
-            if (!await startup.HandleServerAcceptClient())
-            {
-                Console.WriteLine("! Error handling new peer");
-                continue;
+        _ = Task.Run(async () => {
+            while (!startup.cancellation.Token.IsCancellationRequested) {
+                if (!await startup.HandleServerAcceptClient())
+                {
+                    Console.WriteLine("! Error handling new peer");
+                    continue;
+                }
             }
-        }
+        });
+        
+        // Gather console message and send to each peer
+        await startup.HandleInput();
+
+        return 0;
     }
 }
